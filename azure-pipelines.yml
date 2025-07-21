@@ -1,5 +1,7 @@
 trigger:
-- master
+  branches:
+    include:
+      - master
 
 pool:
   vmImage: 'windows-latest'
@@ -9,33 +11,63 @@ variables:
   buildPlatform: 'Any CPU'
   buildConfiguration: 'Release'
 
-steps:
-- task: NuGetToolInstaller@1
+stages:
+# ------------------------------------
+# Stage 1: Build & Package
+# ------------------------------------
+- stage: Build
+  displayName: 'Build and Package'
+  jobs:
+  - job: BuildJob
+    displayName: 'Build Job'
+    steps:
+    - task: NuGetToolInstaller@1
 
-- task: NuGetCommand@2
-  inputs:
-    restoreSolution: '$(solution)'
+    - task: NuGetCommand@2
+      inputs:
+        restoreSolution: '$(solution)'
 
-- task: VSBuild@1
-  inputs:
-    solution: '$(solution)'
-    msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:PackageLocation="$(build.artifactStagingDirectory)"'
-    platform: '$(buildPlatform)'
-    configuration: '$(buildConfiguration)'
+    - task: VSBuild@1
+      inputs:
+        solution: '$(solution)'
+        msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:PackageLocation="$(build.artifactStagingDirectory)"'
+        platform: '$(buildPlatform)'
+        configuration: '$(buildConfiguration)'
 
-# Optional debug step to verify ZIP file
-- script: |
-    echo "Build Artifact Directory:"
-    dir "$(build.artifactStagingDirectory)"
-  displayName: 'Debug: List build output'
+    - script: |
+        echo "Listing contents of $(build.artifactStagingDirectory):"
+        dir "$(build.artifactStagingDirectory)"
+      displayName: 'Debug: List output files'
 
-# Deploy to Azure App Service (Windows)
-- task: AzureRmWebAppDeployment@5
-  inputs:
-    ConnectionType: 'AzureRM'
-    azureSubscription: 'MSDN Platforms Subscription (6db4c0d0-c8ed-472b-8349-b3424a8af6ac)' # Replace with your connection name
-    appType: 'webApp'
-    WebAppName: 'BlobApp21Jul25'               # Replace with your App Service name
-    package: '$(build.artifactStagingDirectory)/**/*.zip'  # Correct for WebDeploy
-    enableCustomDeployment: true
-    DeploymentType: 'webDeploy'
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact'
+      inputs:
+        pathToPublish: '$(build.artifactStagingDirectory)'
+        artifactName: 'drop'
+        publishLocation: 'Container'
+
+# ------------------------------------
+# Stage 2: Deploy to Azure
+# ------------------------------------
+- stage: Deploy
+  displayName: 'Deploy to Azure App Service'
+  dependsOn: Build
+  jobs:
+  - job: DeployJob
+    displayName: 'Deploy Web App'
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - download: current
+      artifact: drop
+
+    - task: AzureRmWebAppDeployment@5
+      displayName: 'Deploy using Web Deploy'
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'MSDN Platforms Subscription (6db4c0d0-c8ed-472b-8349-b3424a8af6ac)' # 🔁 Change to your connection
+        appType: 'webApp'
+        WebAppName: 'BlobApp21Jul25'                # 🔁 Change to your Azure Web App name
+        package: '$(Pipeline.Workspace)/drop/**/*.zip'
+        enableCustomDeployment: true
+        DeploymentType: 'webDeploy'
